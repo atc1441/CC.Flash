@@ -1,14 +1,11 @@
-// Original code from: https://github.com/x893/CC.Flash
-// Edited by Atc1441 Aaron Christophel : 07.10.2022 compatibility for ESP32
+#include <FastGPIO.h>
 
 #include <ctype.h>
 
-
-// All pins only bitbanged so choose the one you need
-#define LED               22
-#define CC_DC             19
-#define CC_DD             23
-#define CC_RST            33
+#define LED               LED_BUILTIN
+#define CC_DC             5
+#define CC_DD             6
+#define CC_RST            7
 
 #define BUFFER_SIZE       255
 
@@ -20,12 +17,14 @@ byte inDataLen = 0;
 byte idx;
 
 void setup() {
-  pinMode(CC_DC, OUTPUT);
-  pinMode(CC_DD, OUTPUT);
-  pinMode(CC_RST, OUTPUT);
-  digitalWrite(CC_DC, LOW);
-  digitalWrite(CC_DD, HIGH);
-  digitalWrite(CC_RST, HIGH);
+  CLKPR = 0x80;
+  CLKPR = 0;
+
+  FastGPIO::Pin<LED>::setOutputLow();
+
+  FastGPIO::Pin<CC_DC>::setOutputLow();
+  FastGPIO::Pin<CC_DD>::setOutputLow();
+  FastGPIO::Pin<CC_RST>::setInputPulledUp();
 
   Serial.begin(500000);
   LED_OFF();
@@ -39,7 +38,7 @@ void loop() {
   byte inByte = Serial.read();
   if (inByte == '\r') {
     process_cmd();
-    inDataLen = 0;
+    inDataLen=0;
   } else if (inDataLen >= BUFFER_SIZE) {
     do {
       inByte = Serial.read();
@@ -47,7 +46,7 @@ void loop() {
     Serial.println();
     Serial.print("BUFFER OVERFLOW");
     sendERROR();
-    inDataLen = 0;
+    inDataLen=0;
   } else {
     inByte = toupper(inByte);
     if (inByte < ' ') {
@@ -58,32 +57,32 @@ void loop() {
       Serial.print("BAD BYTE RECEIVED:");
       Serial.print(inByte);
       sendERROR();
-      inDataLen = 0;
+      inDataLen=0;
     }
     inBuffer[inDataLen++] = inByte;
-  }
+  }  
 }
 
 void process_cmd() {
   Serial.println();
-
+  
   if (!inDataLen) {
     sendOK();
     return;
   }
-
+  
   byte csum = checkChecksum();
   if (csum) {
     Serial.print("BAD CHECKSUM:");
-    printHexln(0 - csum);
+    printHexln(0-csum);
     sendERROR();
     return;
   }
-
+  
   // Remove checksum from length
   inDataLen -= 2;
 
-  switch (inBuffer[0]) {
+  switch(inBuffer[0]) {
     case 'D': CMD_ENTER_DEBUG();    break;
     case 'L': CMD_LED();            break;
     case 'R': CMD_RESET();          break;
@@ -93,7 +92,7 @@ void process_cmd() {
       Serial.print("BAD COMMAND:");
       Serial.println(inBuffer[0]);
       sendERROR();
-  }
+  }  
 }
 
 void CMD_ENTER_DEBUG() {
@@ -116,12 +115,12 @@ void CMD_LED() {
   switch (inBuffer[1]) {
     case '0': LED_OFF();                                    break;
     case '1': LED_ON();                                     break;
-    case '3': digitalWrite(CC_DC, HIGH);    				break;
-    case '4': digitalWrite(CC_DC, LOW);    					break;
-    case '5': digitalWrite(CC_DD, HIGH);    				break;
-    case '6': digitalWrite(CC_DD, LOW);    					break;
-    case '7': digitalWrite(CC_RST, LOW);        			break;
-    case '8': digitalWrite(CC_RST, LOW);     				break;
+    case '3': FastGPIO::Pin<CC_DC>::setOutputValueHigh();   break;
+    case '4': FastGPIO::Pin<CC_DC>::setOutputValueLow();    break;
+    case '5': FastGPIO::Pin<CC_DD>::setOutputValueHigh();   break;
+    case '6': FastGPIO::Pin<CC_DD>::setOutputValueLow();    break;
+    case '7': FastGPIO::Pin<CC_RST>::setOutputLow();        break;
+    case '8': FastGPIO::Pin<CC_RST>::setInputPulledUp();    break;
   }
   sendOK();
 }
@@ -131,7 +130,7 @@ void CMD_RESET() {
     sendERROR();
     return;
   }
-
+  
   switch (inBuffer[1]) {
     case '0': dbg_reset(0);   break;
     case '1': dbg_reset(1);   break;
@@ -144,7 +143,7 @@ void CMD_XDATA() {
     sendERROR();
     return;
   }
-
+  
   byte cnt = getHexByte(6);
   if (!cnt) {
     sendOK();
@@ -155,7 +154,7 @@ void CMD_XDATA() {
     sendERROR();
     return;
   }
-
+  
   LED_ON();
   switch (inBuffer[1]) {
     case 'W': CMD_XDATA_WRITE(cnt);                   break;
@@ -171,7 +170,7 @@ void CMD_XDATA_WRITE(byte cnt) {
   idx = 8;
   dbg_instr(0x90, getHexByte(2), getHexByte(4));      // MOV DPTR #high #low
   while (cnt-- > 0) {
-    if (idx + 1 >= inDataLen) {
+    if (idx+1 >= inDataLen) {
       Serial.println("NO DATA");
       sendERROR();
       return;
@@ -181,7 +180,7 @@ void CMD_XDATA_WRITE(byte cnt) {
       sendERROR();
       return;
     }
-
+    
     dbg_instr(0x74, getHexByte(idx));
     dbg_instr(0xF0);
     dbg_instr(0xA3);
@@ -214,7 +213,7 @@ void CMD_EXTENDED() {
   LED_ON();
   idx = 1;
   bool ok = true;
-  while (ok && idx < inDataLen) {
+  while (ok && idx < inDataLen) {    
     switch (inBuffer[idx++]) {
       case 'W': ok = CMD_EXTENDED_WRITE();  break;
       case 'R': ok = CMD_EXTENDED_READ();   break;
@@ -224,7 +223,7 @@ void CMD_EXTENDED() {
   }
   LED_OFF();
   if (ok) {
-    sendOK();
+    sendOK();    
   } else {
     sendERROR();
   }
@@ -233,12 +232,12 @@ void CMD_EXTENDED() {
 bool CMD_EXTENDED_WRITE() {
   if (idx >= inDataLen || !isdigit(inBuffer[idx]))
     return false;
-
+    
   byte cnt = inBuffer[idx++] - '0';
   if (!cnt)
     return true;
   while (cnt-- > 0) {
-    if (idx + 1 >= inDataLen || !isHexByte(idx))
+    if (idx+1 >= inDataLen || !isHexByte(idx))
       return false;
     dbg_write(getHexByte(idx));
     idx += 2;
@@ -296,22 +295,22 @@ byte checkChecksum() {
   byte csum = 0;
   byte imax = inDataLen - 2;
   byte i = 0;
-  for (; i < imax; ++i)
+  for(; i < imax; ++i)
     csum += inBuffer[i];
   csum = ~csum;
   return (csum + getHexByte(i));
 }
 
 void LED_OFF() {
-  digitalWrite(LED, 0);
+  FastGPIO::Pin<LED>::setOutputValueLow();
 }
 
 void LED_ON() {
-  digitalWrite(LED, 1);
+  FastGPIO::Pin<LED>::setOutputValueHigh();
 }
 
 void LED_TOGGLE() {
-  digitalWrite(LED, !digitalRead(LED));
+  FastGPIO::Pin<LED>::setOutputValueToggle();
 }
 
 void BlinkLED(byte blinks) {
@@ -326,24 +325,24 @@ void BlinkLED(byte blinks) {
 
 void cc_delay( unsigned char d ) {
   volatile unsigned char i = d;
-  while ( i-- );
+  while( i-- );
 }
 
 inline void dbg_clock_high() {
-  digitalWrite(CC_DC, 1);
+  FastGPIO::Pin<CC_DC>::setOutputValueHigh();
 }
 
 inline void dbg_clock_low() {
-  digitalWrite(CC_DC, 0);
+  FastGPIO::Pin<CC_DC>::setOutputValueLow();
 }
 
 // 1 - activate RESET (low)
 // 0 - deactivate RESET (high)
 void dbg_reset(unsigned char state) {
   if (state) {
-    digitalWrite(CC_RST, 0);
+    FastGPIO::Pin<CC_RST>::setOutputLow();
   } else {
-    digitalWrite(CC_RST, 1);
+    FastGPIO::Pin<CC_RST>::setInputPulledUp();
   }
   cc_delay(200);
 }
@@ -362,24 +361,22 @@ void dbg_enter() {
 }
 
 void dbg_begin_response() {
-  pinMode(CC_DD, INPUT);
-  digitalWrite(CC_DD, LOW);
+  FastGPIO::Pin<CC_DD>::setInput();
   asm("nop");
   asm("nop"); // Need to delay for at least 83 ns.
   // Wait for the interface to be ready.
   // This is primarily needed by the 'Gen2' CC25xx devices which have the ability to signal a delayed response
   //  by setting the data line high when the programmer switches from write -> read mode.
-  while (digitalRead(CC_DD)) {
+  while (FastGPIO::Pin<CC_DD>::isInputHigh()) {
     for (byte cnt = 8; cnt; cnt--) {
-      digitalWrite(CC_DC, HIGH);
-      digitalWrite(CC_DC, LOW);
-    }
+      dbg_clock_high();
+      dbg_clock_low();
+    }    
   }
 }
 
 void dbg_end_response() {
-  pinMode(CC_DD, OUTPUT);
-  digitalWrite(CC_DD, LOW);
+  FastGPIO::Pin<CC_DD>::setOutputLow();
 }
 
 byte dbg_read() {
@@ -390,7 +387,7 @@ byte dbg_read() {
     asm("nop");
     asm("nop");
     asm("nop");
-    if (digitalRead(CC_DD))
+    if (FastGPIO::Pin<CC_DD>::isInputHigh())
       data |= 0x01;
     dbg_clock_low();
   }
@@ -400,9 +397,9 @@ byte dbg_read() {
 void dbg_write(byte data) {
   for (byte cnt = 8; cnt; cnt--) {
     if (data & 0x80)
-      digitalWrite(CC_DD, HIGH);
+      FastGPIO::Pin<CC_DD>::setOutputValueHigh();
     else
-      digitalWrite(CC_DD, LOW);
+      FastGPIO::Pin<CC_DD>::setOutputValueLow();
     dbg_clock_high();
     data <<= 1;
     dbg_clock_low();
@@ -439,7 +436,7 @@ byte dbg_instr(byte in0, byte in1) {
   dbg_write(0x56);
   dbg_write(in0);
   dbg_write(in1);
-
+  
   dbg_begin_response();
   byte response = dbg_read();
   dbg_end_response();
